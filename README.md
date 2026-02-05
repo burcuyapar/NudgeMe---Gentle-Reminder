@@ -235,9 +235,9 @@ Expo CLI
 ### Installation
 
 1. **Clone repository**
-```bash
-git clone https://github.com/yourusername/nudgeme-public.git
-cd nudgeme-public
+```
+git clone https://github.com/burcuyapar/NudgeMe---Gentle-Reminder.git
+cd NudgeMe---Gentle-Reminder
 ```
 
 2. **Install dependencies**
