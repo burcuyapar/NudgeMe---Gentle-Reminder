@@ -1,0 +1,48 @@
+// src/constants/config.js.template
+// 
+// Configuration template for NudgeMe
+// 
+// Instructions:
+// 1. Copy this file to config.js: cp config.js.template config.js
+// 2. Replace all placeholder values with your actual API credentials
+// 3. NEVER commit config.js to version control (.gitignore protects this)
+
+export const CONFIG = {
+  // Supabase Configuration
+  // Get these from: https://app.supabase.com/project/_/settings/api
+  SUPABASE_URL: 'https://your-project.supabase.co',
+  SUPABASE_ANON_KEY: 'your-supabase-anon-key-here',
+
+  // OpenAI Configuration  
+  // Get your API key from: https://platform.openai.com/api-keys
+  OPENAI_API_KEY: 'sk-your-openai-api-key-here',
+
+  // Anthropic Configuration
+  // Get your API key from: https://console.anthropic.com/settings/keys
+  ANTHROPIC_API_KEY: 'sk-ant-your-anthropic-api-key-here',
+};
+
+// Validation helper (add to App.js startup)
+export function validateConfig() {
+  const required = [
+    'SUPABASE_URL',
+    'SUPABASE_ANON_KEY',
+    'OPENAI_API_KEY',
+    'ANTHROPIC_API_KEY',
+  ];
+
+  for (const key of required) {
+    if (
+      !CONFIG[key] ||
+      CONFIG[key].includes('your-') ||
+      CONFIG[key].includes('-here')
+    ) {
+      throw new Error(
+        `Invalid configuration: ${key} is not set. ` +
+        `Please copy config.js.template to config.js and add your credentials.`
+      );
+    }
+  }
+
+  console.log('✅ Configuration validated successfully');
+}
