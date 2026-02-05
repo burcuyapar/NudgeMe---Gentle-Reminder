@@ -1,0 +1,664 @@
+# Architecture Documentation
+
+## System Overview
+
+NudgeMe is built with a microservices-oriented architecture leveraging cloud services for backend operations while maintaining a native mobile frontend experience.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        iOS App (React Native)                │
+│                                                              │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
+│  │  Navigation  │  │     State    │  │   Storage    │     │
+│  │  (React Nav) │  │   (Hooks +   │  │ (AsyncStorage│     │
+│  │              │  │   Context)   │  │              │     │
+│  └──────────────┘  └──────────────┘  └──────────────┘     │
+│                                                              │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
+│  │    Screens   │  │  Components  │  │   Services   │     │
+│  │  (20+ views) │  │   (Reusable) │  │  (API calls) │     │
+│  └──────────────┘  └──────────────┘  └──────────────┘     │
+└─────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│                      Service Layer                           │
+│                                                              │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
+│  │   Supabase   │  │    OpenAI    │  │   Anthropic  │     │
+│  │   (Backend)  │  │  (Voice AI)  │  │   (Claude)   │     │
+│  │              │  │              │  │              │     │
+│  │  • Auth      │  │  • Whisper   │  │  • Haiku 3.5 │     │
+│  │  • Database  │  │  • GPT-4o-   │  │  • Reminder  │     │
+│  │  • RLS       │  │    mini      │  │    Parsing   │     │
+│  │              │  │  • TTS-1-HD  │  │              │     │
+│  └──────────────┘  └──────────────┘  └──────────────┘     │
+└─────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   Data & Infrastructure                      │
+│                                                              │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
+│  │  PostgreSQL  │  │   Local      │  │   Expo       │     │
+│  │  (Supabase)  │  │Notifications │  │  Push Tokens │     │
+│  │              │  │              │  │              │     │
+│  │  • Users     │  │  • Scheduled │  │  • Device    │     │
+│  │  • Children  │  │  • Pending   │  │    IDs       │     │
+│  │  • Reminders │  │  • Delivered │  │              │     │
+│  └──────────────┘  └──────────────┘  └──────────────┘     │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Core Components
+
+### 1. Frontend Architecture
+
+#### Screen Navigation Flow
+```
+Welcome Screen
+    ↓
+Onboarding (6 steps)
+    ├── Step 1: Name Collection
+    ├── Step 2: Children Count
+    ├── Step 3: Children Info
+    ├── Step 4: School Schedule
+    ├── Step 5: Activities
+    └── Step 6: Self-Care
+    ↓
+Dashboard (Home)
+    ├── Voice Assistant
+    ├── All Reminders
+    ├── Add Reminder
+    ├── Edit Reminder
+    └── Profile
+```
+
+#### State Management Pattern
+```javascript
+// Session State (AsyncStorage)
+{
+  user: { id, email, name },
+  onboardingComplete: boolean,
+  sessionExpiry: timestamp
+}
+
+// App State (React Context)
+{
+  reminders: Array<Reminder>,
+  children: Array<Child>,
+  loading: boolean,
+  error: string | null
+}
+
+// Component State (useState/useReducer)
+- Local UI state (modals, forms, animations)
+- Temporary input values
+- Component-specific flags
+```
+
+### 2. Database Architecture
+
+#### User ID System (Critical Design Decision)
+
+**Problem:** Supabase's `auth.users` table is not directly accessible for foreign keys.
+
+**Solution:** Copy auth UID to application `users` table:
+
+```sql
+-- Authentication table (managed by Supabase)
+auth.users
+├── id (UUID) -- The actual auth UID
+├── email
+└── encrypted_password
+
+-- Application table (our schema)
+public.users
+├── id (UUID) -- Random UUID, NOT used for relationships
+├── user_id (TEXT) -- COPY of auth.users.id, used for FK
+├── name
+└── created_at
+
+-- Child table references user_id
+public.children
+├── id (UUID)
+├── user_id (TEXT) -- References users.user_id
+└── ...
+
+-- Reminders table references user_id
+public.reminders
+├── id (UUID)
+├── user_id (TEXT) -- References users.user_id
+└── ...
+```
+
+**Why This Design?**
+1. RLS policies can filter by `auth.uid()::text = user_id`
+2. No need to join with `auth.users` (better performance)
+3. Clear separation between auth system and application data
+4. Enables proper data isolation without complex policies
+
+#### Row Level Security (RLS) Policies
+
+**Policy Structure (repeated per table):**
+
+```sql
+-- SELECT Policy
+CREATE POLICY "Users can view own [records]"
+ON [table_name] FOR SELECT
+USING (auth.uid()::text = user_id);
+
+-- INSERT Policy
+CREATE POLICY "Users can create own [records]"
+ON [table_name] FOR INSERT
+WITH CHECK (auth.uid()::text = user_id);
+
+-- UPDATE Policy
+CREATE POLICY "Users can update own [records]"
+ON [table_name] FOR UPDATE
+USING (auth.uid()::text = user_id)
+WITH CHECK (auth.uid()::text = user_id);
+
+-- DELETE Policy
+CREATE POLICY "Users can delete own [records]"
+ON [table_name] FOR DELETE
+USING (auth.uid()::text = user_id);
+```
+
+**Critical Learning - PERMISSIVE vs RESTRICTIVE:**
+
+```sql
+-- ❌ BAD: PERMISSIVE policy with true overrides all others
+CREATE POLICY "Allow all for testing"
+ON reminders
+AS PERMISSIVE
+USING (true); -- This breaks everything!
+
+-- ✅ GOOD: RESTRICTIVE policies (default)
+CREATE POLICY "Users can view own reminders"
+ON reminders FOR SELECT
+USING (auth.uid()::text = user_id); -- Proper filtering
+```
+
+PERMISSIVE policies use OR logic - if ANY permissive policy returns true, access is granted regardless of other policies. Build 5 fix involved deleting a leftover testing policy.
+
+### 3. Notification System
+
+#### Two-Time Architecture
+
+**Problem:** Users think in event times but need advance warnings.
+
+**Example:**
+- User says: "Pick up Emma at 3:00 PM"
+- They want reminder at: 2:30 PM (30 minutes before)
+- Card should display: 3:00 PM (the event time)
+- Notification should fire: 2:30 PM (the alert time)
+
+**Database Schema:**
+```sql
+reminders
+├── event_time TIMESTAMP -- What user sees ("3:00 PM")
+├── notification_time TIMESTAMP -- When alert fires ("2:30 PM")
+└── advance_minutes INTEGER -- Difference (30)
+```
+
+**Calculation Logic:**
+```javascript
+// Service: reminders.js
+function calculateNotificationTime(eventTime, category, subcategory) {
+  const advances = {
+    school: { pickup: 30, dropoff: 30 },
+    activity: { all: 60 },
+    personal: {
+      pills: 0,      // Exact time
+      supplements: 0, // Exact time
+      yoga: 15,      // Configurable
+      gym: 30        // Configurable
+    }
+  };
+  
+  const advance = advances[category][subcategory] || 0;
+  return new Date(eventTime.getTime() - (advance * 60 * 1000));
+}
+```
+
+#### Local Notification Lifecycle
+
+**1. Scheduling** (when reminder is created):
+```javascript
+// services/notifications.js
+export async function scheduleNotification(reminder) {
+  const notificationId = await Notifications.scheduleNotificationAsync({
+    content: {
+      title: reminder.title,
+      body: `Time: ${formatTime(reminder.event_time)}`,
+      data: { reminderId: reminder.id },
+    },
+    trigger: { date: new Date(reminder.notification_time) },
+  });
+  
+  // Save notificationId to database for tracking
+  await updateReminder(reminder.id, { notification_id: notificationId });
+}
+```
+
+**2. Delivery** (at notification_time):
+- iOS displays notification banner
+- User taps → app opens to reminder details
+- Notification marked as delivered in system
+
+**3. Rescheduling** (on app startup):
+```javascript
+// services/reminders.js
+export async function rescheduleNotificationsOnStartup() {
+  // Get all active reminders from database
+  const activeReminders = await getActiveReminders();
+  
+  // Get currently scheduled notifications
+  const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+  const scheduledIds = new Set(scheduled.map(n => n.identifier));
+  
+  // Find reminders missing notifications
+  for (const reminder of activeReminders) {
+    if (!scheduledIds.has(reminder.notification_id)) {
+      // Notification lost (app reinstall/device restart)
+      await scheduleNotification(reminder);
+    }
+  }
+}
+```
+
+**Why Rescheduling is Necessary:**
+- Local notifications are stored in iOS system, not cloud
+- App reinstall → all notifications deleted
+- Device restart → notifications persist (usually)
+- App update → notifications may be cleared
+- Solution: Always reconcile database vs system on startup
+
+### 4. Voice AI Pipeline
+
+#### Complete Flow
+```
+User speaks
+    ↓
+[Press & Hold Mic Button]
+    ↓
+Audio Recording (expo-av)
+    ↓
+Base64 Encoding
+    ↓
+OpenAI Whisper API (Speech-to-Text)
+    ↓
+Text Transcript
+    ↓
+Claude Haiku 3.5 API (Reminder Parsing)
+    ↓
+Structured Reminder Object
+    ↓
+Save to Database
+    ↓
+Schedule Notification
+    ↓
+OpenAI TTS-1-HD (Text-to-Speech)
+    ↓
+Audio Response
+    ↓
+Play to User
+```
+
+#### Implementation Details
+
+**1. Audio Recording:**
+```javascript
+// services/whisper.js
+import { Audio } from 'expo-av';
+
+async function startRecording() {
+  await Audio.requestPermissionsAsync();
+  await Audio.setAudioModeAsync({
+    allowsRecordingIOS: true,
+    playsInSilentModeIOS: true,
+  });
+  
+  const { recording } = await Audio.Recording.createAsync(
+    Audio.RecordingOptionsPresets.HIGH_QUALITY
+  );
+  
+  return recording;
+}
+```
+
+**2. Speech-to-Text:**
+```javascript
+// services/whisper.js
+export async function transcribeAudio(audioUri) {
+  // Read audio file as base64
+  const audioBase64 = await FileSystem.readAsStringAsync(audioUri, {
+    encoding: FileSystem.EncodingType.Base64,
+  });
+  
+  // Convert to Buffer (Node.js Buffer polyfill required)
+  const audioBuffer = Buffer.from(audioBase64, 'base64');
+  
+  // Send to Whisper API
+  const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${CONFIG.OPENAI_API_KEY}`,
+      'Content-Type': 'multipart/form-data',
+    },
+    body: createFormData(audioBuffer, 'audio.m4a'),
+  });
+  
+  const data = await response.json();
+  return data.text;
+}
+```
+
+**3. AI Reminder Parsing:**
+```javascript
+// services/claude.js
+export async function parseReminderFromText(userMessage, familyContext) {
+  const prompt = `
+You are a helpful AI assistant for busy parents. Parse this request into a structured reminder.
+
+Family Context:
+${JSON.stringify(familyContext, null, 2)}
+
+User Request: "${userMessage}"
+
+Return JSON only:
+{
+  "title": "Brief reminder title",
+  "child_name": "Child's name (if mentioned)",
+  "category": "school | activity | personal | household",
+  "subcategory": "pickup | dropoff | practice | pills | etc",
+  "event_time": "ISO timestamp",
+  "recurrence": "one-time | daily | weekly | etc",
+  "notes": "Any additional context"
+}
+`;
+
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'x-api-key': CONFIG.ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'claude-haiku-3.5-20240307',
+      max_tokens: 1024,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+  });
+  
+  const data = await response.json();
+  return JSON.parse(data.content[0].text);
+}
+```
+
+**4. Text-to-Speech:**
+```javascript
+// services/textToSpeech.js
+export async function generateSpeech(text) {
+  const response = await fetch('https://api.openai.com/v1/audio/speech', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${CONFIG.OPENAI_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'tts-1-hd',
+      voice: 'nova',
+      input: text,
+    }),
+  });
+  
+  const audioBlob = await response.blob();
+  const audioUri = await saveAudioLocally(audioBlob);
+  
+  // Play audio
+  const { sound } = await Audio.Sound.createAsync({ uri: audioUri });
+  await sound.playAsync();
+}
+```
+
+### 5. Authentication Flow
+
+#### Complete Auth Sequence
+
+**Initial App Launch:**
+```javascript
+// App.js (on mount)
+useEffect(() => {
+  async function initialize() {
+    // 1. Restore session from AsyncStorage
+    const session = await AsyncStorage.getItem('user_session');
+    
+    if (session) {
+      const { user, expiresAt } = JSON.parse(session);
+      
+      // 2. Check if session is still valid
+      if (Date.now() < expiresAt) {
+        // 3. Restore Supabase session
+        const { data } = await supabase.auth.setSession({
+          access_token: user.access_token,
+          refresh_token: user.refresh_token,
+        });
+        
+        if (data.session) {
+          // 4. Check onboarding status
+          const onboardingComplete = await checkOnboardingStatus(data.user.id);
+          
+          // 5. Navigate appropriately
+          if (onboardingComplete) {
+            navigation.navigate('Dashboard');
+          } else {
+            navigation.navigate('Onboarding');
+          }
+          return;
+        }
+      }
+    }
+    
+    // No valid session → Welcome screen
+    navigation.navigate('Welcome');
+  }
+  
+  // Register auth state listener AFTER restore
+  const { data: authListener } = supabase.auth.onAuthStateChange(
+    async (event, session) => {
+      if (event === 'SIGNED_IN' && session) {
+        // Save to AsyncStorage
+        await AsyncStorage.setItem('user_session', JSON.stringify({
+          user: session.user,
+          expiresAt: Date.now() + (7 * 24 * 60 * 60 * 1000), // 7 days
+        }));
+        
+        // Check onboarding
+        const complete = await checkOnboardingStatus(session.user.id);
+        navigation.navigate(complete ? 'Dashboard' : 'Onboarding');
+      }
+      
+      if (event === 'SIGNED_OUT') {
+        await AsyncStorage.removeItem('user_session');
+        navigation.navigate('Welcome');
+      }
+    }
+  );
+  
+  initialize();
+  
+  return () => {
+    authListener.subscription.unsubscribe();
+  };
+}, []);
+```
+
+**Critical Patterns:**
+1. Session restore MUST complete before listener registration
+2. Single source of truth: `onAuthStateChange` handles all auth events
+3. Module-level guard prevents concurrent auth checks during race conditions
+4. AsyncStorage persistence enables "auto sign-in" UX
+
+---
+
+## Performance Optimizations
+
+### 1. Database Query Optimization
+```javascript
+// ❌ BAD: N+1 query problem
+async function getRemindersWithChildren() {
+  const reminders = await supabase
+    .from('reminders')
+    .select('*');
+  
+  for (const reminder of reminders) {
+    reminder.child = await supabase
+      .from('children')
+      .select('*')
+      .eq('id', reminder.child_id)
+      .single();
+  }
+}
+
+// ✅ GOOD: Single query with join
+async function getRemindersWithChildren() {
+  const { data } = await supabase
+    .from('reminders')
+    .select(`
+      *,
+      child:children(*)
+    `)
+    .order('notification_time', { ascending: true });
+  
+  return data;
+}
+```
+
+### 2. React Native Optimizations
+- `FlatList` with `keyExtractor` and `getItemLayout` for long lists
+- `useMemo` for expensive calculations
+- `useCallback` for event handlers passed to children
+- `React.memo` for components that render frequently
+
+### 3. API Call Batching
+```javascript
+// Batch multiple reminder creations into single transaction
+export async function createReminders(reminders) {
+  const { data, error } = await supabase
+    .from('reminders')
+    .insert(reminders)
+    .select();
+  
+  // Schedule all notifications in parallel
+  await Promise.all(
+    data.map(reminder => scheduleNotification(reminder))
+  );
+}
+```
+
+---
+
+## Security Considerations
+
+### 1. API Key Protection
+```javascript
+// ✅ CORRECT: Environment-based config
+// src/constants/config.js (NOT committed to Git)
+export const CONFIG = {
+  SUPABASE_URL: process.env.SUPABASE_URL,
+  SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY,
+  // ...
+};
+
+// .gitignore
+src/constants/config.js
+.env
+```
+
+### 2. Row Level Security
+- All database tables have RLS enabled
+- SELECT, INSERT, UPDATE, DELETE policies on each table
+- Policies filter by `auth.uid()` to ensure user isolation
+- No permissive "allow all" policies in production
+
+### 3. Input Validation
+```javascript
+// Client-side validation before API calls
+function validateReminderInput(data) {
+  if (!data.title || data.title.length > 200) {
+    throw new Error('Invalid title');
+  }
+  
+  if (!data.event_time || new Date(data.event_time) < Date.now()) {
+    throw new Error('Event time must be in the future');
+  }
+  
+  // Additional validations...
+}
+```
+
+---
+
+## Deployment Architecture
+
+### TestFlight Build Process
+```bash
+# 1. Clean build
+npx expo prebuild --platform ios --clean
+
+# 2. Open Xcode
+cd ios
+open NudgeMeGentleReminder.xcworkspace
+
+# 3. Verify settings
+#    - Team: Inner Joy Meditation
+#    - Bundle ID: com.burcuyapar.nudgeme
+#    - Build number: Increment from last build
+
+# 4. Archive
+#    Product → Archive
+
+# 5. Distribute
+#    Organizer → Distribute App → App Store Connect
+
+# 6. Upload
+#    Wait for processing (~10 minutes)
+
+# 7. Add to Test Group
+#    App Store Connect → TestFlight → Internal Testing
+```
+
+### Environment Configuration
+- Development: Local Supabase, test API keys
+- Production: Production Supabase, real API keys
+- TestFlight: Production environment
+
+---
+
+## Future Architecture Considerations
+
+### 1. Scalability
+- Move to remote push notifications for better reliability
+- Implement caching layer (Redis) for frequently accessed data
+- Add CDN for static assets
+
+### 2. Monitoring
+- Sentry for error tracking
+- Analytics for user behavior (Amplitude/Mixpanel)
+- Performance monitoring (Firebase Performance)
+
+### 3. Testing
+- Unit tests for services (Jest)
+- Integration tests for API calls
+- E2E tests for critical flows (Detox)
+
+---
+
+**Document Version:** 1.0  
+**Last Updated:** February 3, 2026  
+**Status:** Production Architecture (Build 5)
