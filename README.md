@@ -416,7 +416,7 @@ Built by **Burcu Yapar** as a portfolio project demonstrating full-stack mobile 
 - Critical debugging and problem-solving
 
 **Connect:**
-- GitHub: [@yourusername](https://github.com/yourusername)
+- GitHub: [@burcuyapar](https://github.com/burcuyapar)
 - LinkedIn: https://www.linkedin.com/in/burcu-yapar-üç-22086a6/
 - Portfolio: 
 
