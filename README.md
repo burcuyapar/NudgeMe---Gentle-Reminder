@@ -417,8 +417,8 @@ Built by **Burcu Yapar** as a portfolio project demonstrating full-stack mobile 
 
 **Connect:**
 - GitHub: [@yourusername](https://github.com/yourusername)
-- LinkedIn: [Your LinkedIn](https://linkedin.com/in/yourprofile)
-- Portfolio: [yourwebsite.com](https://yourwebsite.com)
+- LinkedIn: https://www.linkedin.com/in/burcu-yapar-üç-22086a6/
+- Portfolio: 
 
 ---
 
