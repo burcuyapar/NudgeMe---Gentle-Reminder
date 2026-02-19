@@ -351,8 +351,7 @@ NudgeMe/
 
 ## 📸 Screenshots
 
-*Coming soon: Will include onboarding flow, dashboard, voice assistant, and notifications*
-
+<img width="2752" height="1536" alt="Gemini_Generated_Image_lmgbmolmgbmolmgb" src="https://github.com/user-attachments/assets/98ffa970-f2b2-4a4b-b4e7-885653fc250e" />
 ---
 
 ## 🚧 Known Limitations & Future Roadmap
@@ -432,6 +431,14 @@ Built by **Burcu Yapar** as a portfolio project demonstrating full-stack mobile 
 ---
 
 **Status:** 🟢 Production Ready | Live on TestFlight  
+## 📱 Try NudgeMe on TestFlight
+
+**Live beta available now!**
+
+👉 **[Join TestFlight Beta](https://testflight.apple.com/join/KUwQsFbz)** 👈
+
+*Note: iOS device required. TestFlight is Apple's official beta testing platform.*
+
 **Version:** 1.0.0 (Build 5)  
 **Last Updated:** February 3, 2026
 
