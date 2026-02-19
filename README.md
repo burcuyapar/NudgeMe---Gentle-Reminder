@@ -351,7 +351,8 @@ NudgeMe/
 
 ## 📸 Screenshots
 
-<img width="2752" height="1536" alt="Gemini_Generated_Image_lmgbmolmgbmolmgb" src="https://github.com/user-attachments/assets/98ffa970-f2b2-4a4b-b4e7-885653fc250e" />
+<img width="2752" height="1536" alt="Gemini_Generated_Image_lwaxyhlwaxyhlwax" src="https://github.com/user-attachments/assets/573b300a-2735-461e-9e74-23d6c0a76fd7" />
+
 ---
 
 ## 🚧 Known Limitations & Future Roadmap
