@@ -37,7 +37,7 @@ NudgeMe is a production-ready iOS application that serves as a "second brain" fo
 - Persistent sessions with automatic authentication
 
 ### 🤖 AI Voice Assistant
-- **Claude Haiku 3.5** for intelligent reminder parsing
+- **Claude 3 Haiku (claude-3-haiku-20240307)** for intelligent reminder parsing
 - **OpenAI Whisper** for accurate speech-to-text
 - **GPT-4o-mini** for natural conversation
 - **OpenAI TTS-1-HD** for human-like voice responses
@@ -77,7 +77,7 @@ Sophisticated two-time architecture enabling context-aware alerts:
 ```
 Frontend:          React Native 0.75.4 + Expo SDK 54
 Backend:           Supabase (PostgreSQL + Auth + RLS)
-AI Services:       Claude Haiku 3.5, OpenAI (Whisper, GPT-4o-mini, TTS-1-HD)
+AI Services:       Claude 3 Haiku (claude-3-haiku-20240307), OpenAI (Whisper, GPT-4o-mini, TTS-1-HD)
 Notifications:     Expo Notifications API (local scheduling)
 Navigation:        React Navigation 7
 State Management:  React Hooks + AsyncStorage
@@ -337,7 +337,7 @@ NudgeMe/
 - **Startup Rescheduling:** Compare database vs scheduled notifications on app launch
 
 ### 4. AI Integration
-- **Token Management:** Claude Haiku 3.5 more cost-effective than GPT-4 for parsing
+- **Token Management:** Claude 3 Haiku (claude-3-haiku-20240307) more cost-effective than GPT-4 for parsing
 - **Voice UX:** Press-and-hold prevents cutting users off mid-sentence
 - **Context-Aware Timing:** Different reminder types need different advance notice
 
