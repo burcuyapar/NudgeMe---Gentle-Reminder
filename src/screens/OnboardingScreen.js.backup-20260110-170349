@@ -1,0 +1,1102 @@
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  TextInput,
+  ScrollView,
+  SafeAreaView,
+  Platform,
+  KeyboardAvoidingView,
+  Alert,
+  ActivityIndicator,
+  Keyboard,
+} from 'react-native';
+import { Audio } from 'expo-av';
+import { LinearGradient } from 'expo-linear-gradient';
+import * as FileSystem from 'expo-file-system/legacy';
+import { Buffer } from 'buffer';
+import { transcribeAudio } from '../services/whisper';
+import { callOpenAI } from '../services/openai';
+import { speakAsNudge, stopSpeaking } from '../services/textToSpeech';
+import { parseChildren, parseActivities, parseSelfReminder } from '../services/openai';
+import { saveOnboardingData } from '../services/reminders';
+
+export default function OnboardingScreen({ navigation }) {
+  // ==================== STATE ====================
+  const [currentStage, setCurrentStage] = useState(0);
+  const [currentQuestionType, setCurrentQuestionType] = useState('welcome');
+  const [messages, setMessages] = useState([]);
+  const [inputText, setInputText] = useState('');
+  const [isRecording, setIsRecording] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [voiceEnabled, setVoiceEnabled] = useState(true);
+  const [recording, setRecording] = useState(null);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  
+  // Collected data
+  const [collectedData, setCollectedData] = useState({
+    name: '',
+    numChildren: 0,
+    children: [],
+    activities: [],
+    selfReminder: null,
+  });
+  
+  // Temporary data for multi-step questions
+  const [tempChildData, setTempChildData] = useState({
+    pendingChild: null,
+    pendingActivity: null,
+    pendingRest: [],
+  });
+  
+  const [lastChildName, setLastChildName] = useState('');
+  
+  // Refs
+  const scrollViewRef = useRef(null);
+  
+  // ==================== AUTO-SCROLL ====================
+  useEffect(() => {
+    if (scrollViewRef.current) {
+      setTimeout(() => {
+        scrollViewRef.current?.scrollToEnd({ animated: true });
+      }, 100);
+    }
+  }, [messages]);
+  
+  // ==================== KEYBOARD LISTENERS ====================
+  useEffect(() => {
+    const keyboardDidShowListener = Keyboard.addListener(
+      'keyboardDidShow',
+      () => setKeyboardVisible(true)
+    );
+    const keyboardDidHideListener = Keyboard.addListener(
+      'keyboardDidHide',
+      () => setKeyboardVisible(false)
+    );
+    
+    return () => {
+      keyboardDidShowListener.remove();
+      keyboardDidHideListener.remove();
+    };
+  }, []);
+  
+  // ==================== INITIAL WELCOME ====================
+  useEffect(() => {
+    if (currentStage === 0) {
+      const welcomeMsg = {
+        id: '0',
+        role: 'assistant',
+        content: "Hi! I'm NudgeMe, your personal reminder assistant. I'll help you keep track of everything so you don't have to. Let's get started!",
+        timestamp: new Date(),
+      };
+      setMessages([welcomeMsg]);
+      
+      if (voiceEnabled) {
+        speakAsNudge(welcomeMsg.content, () => setIsSpeaking(false));
+      }
+      
+      setTimeout(() => {
+        const nameQ = {
+          id: '1',
+          role: 'assistant',
+          content: "First, what's your name?",
+          timestamp: new Date(),
+        };
+        setMessages(prev => [...prev, nameQ]);
+        
+        if (voiceEnabled) {
+          speakAsNudge(nameQ.content, () => setIsSpeaking(false));
+        }
+        
+        setCurrentStage(1);
+        setCurrentQuestionType('name');
+      }, 2000);
+    }
+  }, []);
+  
+  // ==================== HELPER FUNCTIONS ====================
+  
+  const isNegativeResponse = (text) => {
+    const t = (text || '').toLowerCase().trim();
+    return (
+      t === 'no' ||
+      t === 'nope' ||
+      t === 'none' ||
+      t === 'nothing' ||
+      t === 'not yet' ||
+      t === 'no thanks' ||
+      t === 'not now' ||
+      t.startsWith('no ') ||
+      t.endsWith(' no')
+    );
+  };
+  
+  const to12 = (time24) => {
+    if (!time24) return '';
+    const match = time24.match(/^(\d{1,2}):(\d{2})$/);
+    if (!match) return time24;
+    let [_, h, m] = match;
+    h = parseInt(h);
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    if (h === 0) h = 12;
+    if (h > 12) h -= 12;
+    return `${h}:${m} ${ampm}`;
+  };
+  
+  // ==================== AUDIO RECORDING ====================
+  
+  const startRecording = async () => {
+    try {
+      const { status } = await Audio.requestPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission Required', 'Please grant microphone permission');
+        return;
+      }
+      
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+      });
+      
+      const { recording: rec } = await Audio.Recording.createAsync(
+        Audio.RecordingOptionsPresets.HIGH_QUALITY
+      );
+      
+      setRecording(rec);
+      setIsRecording(true);
+    } catch (err) {
+      console.error('Failed to start recording:', err);
+      Alert.alert('Error', 'Could not start recording');
+    }
+  };
+  
+  const stopRecording = async () => {
+    if (!recording) return;
+    
+    try {
+      setIsRecording(false);
+      await recording.stopAndUnloadAsync();
+      const uri = recording.getURI();
+      setRecording(null);
+      
+      if (uri) {
+        // Show thinking indicator
+        const thinkingMsg = {
+          id: String(Date.now()),
+          role: 'user',
+          content: '(Processing voice...)',
+          timestamp: new Date(),
+          isThinking: true,
+        };
+        setMessages(prev => [...prev, thinkingMsg]);
+        
+        // Transcribe
+        const transcription = await transcribeAudio(uri);
+        
+        if (transcription) {
+          // Replace thinking with transcription
+          setMessages(prev =>
+            prev.map(msg =>
+              msg.isThinking ? { ...msg, content: transcription, isThinking: false } : msg
+            )
+          );
+          
+          // Process the transcribed text
+          processInputText(transcription);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to stop recording:', err);
+      setMessages(prev => prev.filter(msg => !msg.isThinking));
+    }
+  };
+  
+  // ==================== TEXT INPUT HANDLING ====================
+  
+  const handleSend = () => {
+    if (!inputText.trim()) return;
+    
+    const userMsg = {
+      id: String(Date.now()),
+      role: 'user',
+      content: inputText.trim(),
+      timestamp: new Date(),
+    };
+    
+    setMessages(prev => [...prev, userMsg]);
+    processInputText(inputText.trim());
+    setInputText('');
+  };
+  
+  // ==================== MAIN INPUT PROCESSING ====================
+  
+  const processInputText = (text) => {
+    console.log(`Processing Stage ${currentStage}, Type: ${currentQuestionType}, Input: "${text}"`);
+    
+    // STAGE 1: NAME
+    if (currentStage === 1 && currentQuestionType === 'name') {
+      const name = text.trim();
+      setCollectedData(prev => ({ ...prev, name }));
+      
+      setMessages(prev => [...prev, {
+        id: String(Date.now()),
+        role: 'assistant',
+        content: `Nice to meet you, ${name}! How many children do you have?`,
+        timestamp: new Date(),
+      }]);
+      
+      if (voiceEnabled) {
+        speakAsNudge(`Nice to meet you, ${name}! How many children do you have?`, () => setIsSpeaking(false));
+      }
+      
+      setCurrentStage(2);
+      setCurrentQuestionType('num_children');
+      return;
+    }
+    
+    // STAGE 2: NUMBER OF CHILDREN
+    if (currentStage === 2 && currentQuestionType === 'num_children') {
+      const numMatch = text.match(/\d+/);
+      if (!numMatch) {
+        setMessages(prev => [...prev, {
+          id: String(Date.now()),
+          role: 'assistant',
+          content: "I didn't catch that. How many children do you have? (Just the number)",
+          timestamp: new Date(),
+        }]);
+        
+        if (voiceEnabled) {
+          speakAsNudge("I didn't catch that. How many children do you have? Just the number", () => setIsSpeaking(false));
+        }
+        
+        return;
+      }
+      
+      const numChildren = parseInt(numMatch[0]);
+      setCollectedData(prev => ({ ...prev, numChildren }));
+      
+      if (numChildren === 0) {
+        // Skip to activities
+        setMessages(prev => [...prev, {
+          id: String(Date.now()),
+          role: 'assistant',
+          content: "Got it! Let's move on to activities.",
+          timestamp: new Date(),
+        }]);
+
+        if (voiceEnabled) {
+          speakAsNudge("Got it! Let's move on to activities.", () => setIsSpeaking(false));
+        }
+
+        setCurrentStage(4);
+        setCurrentQuestionType('activities_intro');
+      } else {
+        setMessages(prev => [...prev, {
+          id: String(Date.now()),
+          role: 'assistant',
+          content: `Great! Tell me about your ${numChildren === 1 ? 'child' : 'first child'}. What's their name and age?`,
+          timestamp: new Date(),
+        }]);
+        
+        if (voiceEnabled) {
+          speakAsNudge(`Great! Tell me about your ${numChildren === 1 ? 'child' : 'first child'}. What's their name and age?`, () => setIsSpeaking(false));
+        }
+        
+        setCurrentStage(3);
+        setCurrentQuestionType('child_info');
+      }
+      return;
+    }
+    
+    // STAGE 3: CHILD INFO
+    if (currentStage === 3 && currentQuestionType === 'child_info') {
+      (async () => {
+        try {
+          const parsed = await parseChildren(text);
+          
+          if (!parsed || !parsed.name) {
+            setMessages(prev => [...prev, {
+              id: String(Date.now()),
+              role: 'assistant',
+              content: "I didn't catch the name. Could you tell me their name and age?",
+              timestamp: new Date(),
+            }]);
+            
+            if (voiceEnabled) {
+              speakAsNudge("I didn't catch the name. Could you tell me their name and age?", () => setIsSpeaking(false));
+            }
+            
+            return;
+          }
+          
+          setTempChildData(prev => ({ ...prev, pendingChild: parsed }));
+          setLastChildName(parsed.name);
+          
+          setMessages(prev => [...prev, {
+            id: String(Date.now()),
+            role: 'assistant',
+            content: `Thanks! Does ${parsed.name} go to school or daycare?`,
+            timestamp: new Date(),
+          }]);
+          
+          if (voiceEnabled) {
+            speakAsNudge(`Thanks! Does ${parsed.name} go to school or daycare?`, () => setIsSpeaking(false));
+          }
+          
+          setCurrentQuestionType('child_school');
+        } catch (err) {
+          console.error('Parse error:', err);
+        }
+      })();
+      return;
+    }
+    
+    // STAGE 3: CHILD SCHOOL
+    if (currentStage === 3 && currentQuestionType === 'child_school') {
+      if (isNegativeResponse(text)) {
+        // No school, add child and move on
+        const child = { ...tempChildData.pendingChild, school: null, schoolStartTime: null, schoolEndTime: null };
+        const updatedChildren = [...collectedData.children, child];
+        setCollectedData(prev => ({ ...prev, children: updatedChildren }));
+        
+        if (updatedChildren.length < collectedData.numChildren) {
+          setMessages(prev => [...prev, {
+            id: String(Date.now()),
+            role: 'assistant',
+            content: `Got it! Now tell me about your next child.`,
+            timestamp: new Date(),
+          }]);
+          
+          if (voiceEnabled) {
+            speakAsNudge(`Got it! Now tell me about your next child.`, () => setIsSpeaking(false));
+          }
+          
+          setCurrentQuestionType('child_info');
+          setTempChildData(prev => ({ ...prev, pendingChild: null }));
+        } else {
+          setMessages(prev => [...prev, {
+            id: String(Date.now()),
+            role: 'assistant',
+            content: "Perfect! Any regular activities like sports, music classes, or other commitments?",
+            timestamp: new Date(),
+          }]);
+          
+          if (voiceEnabled) {
+            speakAsNudge("Perfect! Any regular activities like sports, music classes, or other commitments?", () => setIsSpeaking(false));
+          }
+          
+          setCurrentStage(4);
+          setCurrentQuestionType('activities_intro');
+        }
+        return;
+      }
+      
+      // Has school
+      setMessages(prev => [...prev, {
+        id: String(Date.now()),
+        role: 'assistant',
+        content: `Great! What time is drop-off and pickup?`,
+        timestamp: new Date(),
+      }]);
+      setCurrentQuestionType('child_school_times');
+      return;
+    }
+    
+    // STAGE 3: SCHOOL TIMES
+    if (currentStage === 3 && currentQuestionType === 'child_school_times') {
+      const times = text.match(/\d{1,2}:\d{2}|\d{1,2}\s*(am|pm)/gi) || [];
+      
+      const child = {
+        ...tempChildData.pendingChild,
+        school: 'School',
+        schoolStartTime: times[0] || '8:00 AM',
+        schoolEndTime: times[1] || '3:00 PM',
+      };
+      
+      const updatedChildren = [...collectedData.children, child];
+      setCollectedData(prev => ({ ...prev, children: updatedChildren }));
+      
+      if (updatedChildren.length < collectedData.numChildren) {
+        setMessages(prev => [...prev, {
+          id: String(Date.now()),
+          role: 'assistant',
+          content: `Perfect! Now tell me about your next child.`,
+          timestamp: new Date(),
+        }]);
+        setCurrentQuestionType('child_info');
+        setTempChildData(prev => ({ ...prev, pendingChild: null }));
+      } else {
+        setMessages(prev => [...prev, {
+          id: String(Date.now()),
+          role: 'assistant',
+          content: "Great! Any regular activities like sports, music classes, or other commitments?",
+          timestamp: new Date(),
+        }]);
+        
+        if (voiceEnabled) {
+          speakAsNudge("Great! Any regular activities like sports, music classes, or other commitments?", () => setIsSpeaking(false));
+        }
+        
+        setCurrentStage(4);
+        setCurrentQuestionType('activities_intro');
+      }
+      return;
+    }
+    
+    // STAGE 4: ACTIVITIES INTRO
+    if (currentStage === 4 && currentQuestionType === 'activities_intro') {
+      (async () => {
+        // ⚠️ CRITICAL: Check for NO FIRST - before any async calls
+        if (isNegativeResponse(text)) {
+          console.log('✅ User said NO - moving to Stage 5 (NO TTS)');
+          
+          setMessages(prev => [...prev, {
+            id: String(Date.now()),
+            role: 'assistant',
+            content: 'Okay! No activities for now.',
+            timestamp: new Date(),
+          }]);
+          
+          if (voiceEnabled) {
+            speakAsNudge('Okay! No activities for now.', () => setIsSpeaking(false));
+          }
+          
+          setCurrentStage(5);
+          setCurrentQuestionType('self_reminder_intro');
+          
+          const name = collectedData.name || 'there';
+          setMessages(prev => [...prev, {
+            id: String(Date.now() + 1),
+            role: 'assistant',
+            content: `One last thing, ${name}. Let's not forget about you! Would you like a daily reminder for yourself?`,
+            timestamp: new Date(),
+          }]);
+          
+          if (voiceEnabled) {
+            speakAsNudge(`One last thing, ${name}. Let's not forget about you! Would you like a daily reminder for yourself?`, () => setIsSpeaking(false));
+          }
+          
+          return; // EXIT - NO TTS, NO OPENAI
+        }
+        
+        // User wants to add activities
+        try {
+          const childrenList = collectedData.children || [];
+          const parsed = await parseActivities(text, childrenList, lastChildName);
+          
+          if (!parsed.hasActivity || parsed.items.length === 0) {
+            setMessages(prev => [...prev, {
+              id: String(Date.now()),
+              role: 'assistant',
+              content: 'Okay! Moving on.',
+              timestamp: new Date(),
+            }]);
+            
+            if (voiceEnabled) {
+              speakAsNudge('Okay! Moving on.', () => setIsSpeaking(false));
+            }
+            
+            setCurrentStage(5);
+            setCurrentQuestionType('self_reminder_intro');
+            
+            const name = collectedData.name || 'there';
+            setMessages(prev => [...prev, {
+              id: String(Date.now() + 1),
+              role: 'assistant',
+              content: `One last thing, ${name}. Would you like a daily reminder for yourself?`,
+              timestamp: new Date(),
+            }]);
+            
+            if (voiceEnabled) {
+              speakAsNudge(`One last thing, ${name}. Would you like a daily reminder for yourself?`, () => setIsSpeaking(false));
+            }
+            
+            return;
+          }
+          
+          const first = parsed.items[0];
+          const rest = parsed.items.slice(1);
+          
+          // Add activity
+          const newActivity = {
+            activity: first.activity,
+            child: first.child || (childrenList[0]?.name || 'unknown'),
+            day: first.day,
+            time: first.time,
+          };
+          
+          const updatedActivities = [...(collectedData.activities || []), newActivity, ...rest];
+          setCollectedData(prev => ({ ...prev, activities: updatedActivities }));
+          
+          setMessages(prev => [...prev, {
+            id: String(Date.now()),
+            role: 'assistant',
+            content: `Great! I've added ${first.activity}.`,
+            timestamp: new Date(),
+          }]);
+          
+          if (voiceEnabled) {
+            speakAsNudge(`Great! I've added ${first.activity}.`, () => setIsSpeaking(false));
+          }
+          
+          setMessages(prev => [...prev, {
+            id: String(Date.now() + 1),
+            role: 'assistant',
+            content: 'Any other regular activities?',
+            timestamp: new Date(),
+          }]);
+          
+          if (voiceEnabled) {
+            setTimeout(() => {
+              speakAsNudge('Any other regular activities?', () => setIsSpeaking(false));
+            }, 2000);
+          }
+          
+          setCurrentQuestionType('activities_more');
+        } catch (err) {
+          console.error('Parse error:', err);
+        }
+      })();
+      return;
+    }
+    
+    // STAGE 4: ACTIVITIES MORE
+    if (currentStage === 4 && currentQuestionType === 'activities_more') {
+      (async () => {
+        // ⚠️ CRITICAL: Check for NO FIRST
+        if (isNegativeResponse(text)) {
+          console.log('✅ User said NO to more activities - moving to Stage 5');
+          
+          setMessages(prev => [...prev, {
+            id: String(Date.now()),
+            role: 'assistant',
+            content: "Perfect! Let's move on.",
+            timestamp: new Date(),
+          }]);
+          
+          setCurrentStage(5);
+          setCurrentQuestionType('self_reminder_intro');
+          
+          const name = collectedData.name || 'there';
+          setMessages(prev => [...prev, {
+            id: String(Date.now() + 1),
+            role: 'assistant',
+            content: `One last thing, ${name}. Let's not forget about you! Would you like a daily reminder for yourself?`,
+            timestamp: new Date(),
+          }]);
+          
+          if (voiceEnabled) {
+            speakAsNudge(`One last thing, ${name}. Let's not forget about you! Would you like a daily reminder for yourself?`, () => setIsSpeaking(false));
+          }
+          
+          return; // EXIT IMMEDIATELY
+        }
+        
+        // Add more activities
+        try {
+          const childrenList = collectedData.children || [];
+          const parsed = await parseActivities(text, childrenList, lastChildName);
+          
+          if (parsed.hasActivity && parsed.items.length > 0) {
+            const first = parsed.items[0];
+            const newActivity = {
+              activity: first.activity,
+              child: first.child || (childrenList[0]?.name || 'unknown'),
+              day: first.day,
+              time: first.time,
+            };
+            
+            const updatedActivities = [...(collectedData.activities || []), newActivity];
+            setCollectedData(prev => ({ ...prev, activities: updatedActivities }));
+            
+            setMessages(prev => [...prev, {
+              id: String(Date.now()),
+              role: 'assistant',
+              content: `Added ${first.activity}!`,
+              timestamp: new Date(),
+            }]);
+            
+            setMessages(prev => [...prev, {
+              id: String(Date.now() + 1),
+              role: 'assistant',
+              content: 'Any other activities?',
+              timestamp: new Date(),
+            }]);
+          }
+        } catch (err) {
+          console.error('Parse error:', err);
+        }
+      })();
+      return;
+    }
+    
+    // STAGE 5: SELF-REMINDER
+    if (currentStage === 5 && currentQuestionType === 'self_reminder_intro') {
+      if (isNegativeResponse(text)) {
+        setMessages(prev => [...prev, {
+          id: String(Date.now()),
+          role: 'assistant',
+          content: "No problem! Let's review what we've set up.",
+          timestamp: new Date(),
+        }]);
+        
+        if (voiceEnabled) {
+          speakAsNudge("No problem! Let's review what we've set up.", () => setIsSpeaking(false));
+        }
+        
+        // Go to summary
+        generateSummary();
+        return;
+      }
+      
+      setMessages(prev => [...prev, {
+        id: String(Date.now()),
+        role: 'assistant',
+        content: "Great! What would you like to be reminded about? (e.g., 'Take vitamins at 8am')",
+        timestamp: new Date(),
+      }]);
+      
+      if (voiceEnabled) {
+        speakAsNudge("Great! What would you like to be reminded about? For example, Take vitamins at 8am", () => setIsSpeaking(false));
+      }
+      
+      setCurrentQuestionType('self_reminder_detail');
+      return;
+    }
+    
+    // STAGE 5: SELF-REMINDER DETAIL
+    if (currentStage === 5 && currentQuestionType === 'self_reminder_detail') {
+      (async () => {
+        try {
+          const parsed = await parseSelfReminder(text);
+          
+          if (parsed) {
+            setCollectedData(prev => ({ ...prev, selfReminder: parsed }));
+            
+            setMessages(prev => [...prev, {
+              id: String(Date.now()),
+              role: 'assistant',
+              content: `Perfect! I'll remind you about ${parsed.what}.`,
+              timestamp: new Date(),
+            }]);
+            
+            if (voiceEnabled) {
+              speakAsNudge(`Perfect! I'll remind you about ${parsed.what}.`, () => setIsSpeaking(false));
+            }
+          }
+          
+          // Go to summary
+          generateSummary();
+        } catch (err) {
+          console.error('Parse error:', err);
+          generateSummary();
+        }
+      })();
+      return;
+    }
+    
+    // STAGE 6: SUMMARY CONFIRMATION
+    if (currentStage === 6 && currentQuestionType === 'summary_confirm') {
+      if (text.toLowerCase().includes('yes') || text.toLowerCase().includes('correct') || text.toLowerCase().includes('good')) {
+        // Save data
+        saveDataAndComplete();
+      } else {
+        setMessages(prev => [...prev, {
+          id: String(Date.now()),
+          role: 'assistant',
+          content: "No problem! You can update your info later in Profile.",
+          timestamp: new Date(),
+        }]);
+        
+        if (voiceEnabled) {
+          speakAsNudge("No problem! You can update your info later in Profile.", () => setIsSpeaking(false));
+        }
+        
+        setTimeout(() => {
+          saveDataAndComplete();
+        }, 1500);
+      }
+      return;
+    }
+  };
+  
+  // ==================== SUMMARY GENERATION ====================
+  
+  const generateSummary = () => {
+    setCurrentStage(6);
+    setCurrentQuestionType('summary_confirm');
+    
+    const userName = collectedData.name || 'there';
+    const childrenList = collectedData.children || [];
+    const activities = collectedData.activities || [];
+    const selfReminder = collectedData.selfReminder;
+    
+    let summaryText = `All set, ${userName}! Here's your family:\n\n`;
+    
+    // Children
+    summaryText += `👶 Your Children:\n`;
+    childrenList.forEach((child) => {
+      summaryText += `• ${child.name} (${child.age} years old)`;
+      if (child.school) {
+        summaryText += `\n  School: ${child.schoolStartTime} - ${child.schoolEndTime}`;
+      }
+      summaryText += `\n`;
+    });
+    
+    // Activities
+    if (activities.length > 0) {
+      summaryText += `\n🎯 Activities:\n`;
+      activities.forEach((act) => {
+        const timeStr = act.time ? ` ${act.day}s ${act.time}` : ` ${act.day}s`;
+        summaryText += `• ${act.activity} -${timeStr}`;
+        if (act.child) {
+          summaryText += ` (for ${act.child})`;
+        }
+        summaryText += `\n`;
+      });
+    }
+    
+    // ⚠️ ADD SELF-REMINDER SECTION
+    if (selfReminder) {
+      summaryText += `\n⏰ Your Daily Reminder:\n`;
+      summaryText += `• ${selfReminder.what}`;
+      if (selfReminder.time) {
+        summaryText += ` at ${selfReminder.time}`;
+      }
+      summaryText += `\n`;
+    }
+    
+    summaryText += `\n✨ Does this look good?`;
+    
+    setMessages(prev => [...prev, {
+      id: String(Date.now()),
+      role: 'assistant',
+      content: summaryText,
+      timestamp: new Date(),
+    }]);
+  };
+  
+  // ==================== SAVE AND COMPLETE ====================
+  
+  const saveDataAndComplete = async () => {
+    try {
+      setMessages(prev => [...prev, {
+        id: String(Date.now()),
+        role: 'assistant',
+        content: "Perfect! Saving your information...",
+        timestamp: new Date(),
+      }]);
+      
+      if (voiceEnabled) {
+        speakAsNudge("Perfect! Saving your information...", () => setIsSpeaking(false));
+      }
+      
+      await saveOnboardingData(collectedData);
+      
+      setMessages(prev => [...prev, {
+        id: String(Date.now() + 1),
+        role: 'assistant',
+        content: "All set! Let's get started. 🎉",
+        timestamp: new Date(),
+      }]);
+      
+      setTimeout(() => {
+        navigation.navigate('Dashboard');
+      }, 2000);
+      
+      setCurrentStage(7);
+    } catch (err) {
+      console.error('Save error:', err);
+      Alert.alert('Error', 'Could not save data. Please try again.');
+    }
+  };
+  
+  // ==================== RENDER ====================
+  
+  return (
+    <SafeAreaView style={{ flex: 1 }}>
+      <LinearGradient
+        colors={['#B8C5E8', '#E8D5E5']}
+        style={styles.container}
+      >
+        {/* Header */}
+        <View style={styles.header}>
+          <View style={styles.headerLeft}>
+            <Text style={styles.bellIcon}>🔔</Text>
+            <Text style={styles.headerTitle}>NudgeMe</Text>
+          </View>
+          <Text style={styles.stepIndicator}>Step {currentStage}/6</Text>
+        </View>
+      
+      {/* Messages */}
+      <KeyboardAvoidingView
+        style={styles.content}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={0}
+      >
+        <ScrollView
+          ref={scrollViewRef}
+          style={styles.chatContainer}
+          contentContainerStyle={styles.chatContent}
+          keyboardShouldPersistTaps="handled"
+        >
+          {messages.map((msg) => (
+            <View
+              key={msg.id}
+              style={[
+                styles.messageBubble,
+                msg.role === 'user' ? styles.userBubble : styles.assistantBubble
+              ]}
+            >
+              <Text
+                style={[
+                  styles.messageText,
+                  msg.role === 'user' ? styles.userText : styles.assistantText
+                ]}
+              >
+                {msg.content}
+              </Text>
+              {msg.isThinking && (
+                <ActivityIndicator size="small" color="#7B9FE8" style={{ marginLeft: 8 }} />
+              )}
+            </View>
+          ))}
+        </ScrollView>
+        
+        {/* Compact Footer */}
+        {!keyboardVisible && (
+          <Text style={styles.footerHint}>
+            Tap ✏️ to speak or type below
+          </Text>
+        )}
+        
+        <View style={styles.inputContainer}>
+          {/* Mic Button */}
+          <TouchableOpacity
+            style={[
+              styles.micButton,
+              isRecording && styles.micButtonRecording
+            ]}
+            onPressIn={startRecording}
+            onPressOut={stopRecording}
+            activeOpacity={0.8}
+            disabled={isSpeaking}
+          >
+            <Text style={styles.micIcon}>
+              {isRecording ? '⏺' : '🎤'}
+            </Text>
+          </TouchableOpacity>
+          
+          {/* Text Input */}
+          <TextInput
+            style={styles.textInput}
+            placeholder="Type your answer..."
+            placeholderTextColor="#A0AEC0"
+            value={inputText}
+            onChangeText={setInputText}
+            onSubmitEditing={handleSend}
+            returnKeyType="send"
+            editable={!isRecording && !isSpeaking}
+          />
+          
+          {/* Send Button */}
+          <TouchableOpacity
+            style={[
+              styles.sendButton,
+              inputText.trim() && !isRecording && !isSpeaking && styles.sendButtonActive
+            ]}
+            onPress={handleSend}
+            disabled={!inputText.trim() || isRecording || isSpeaking}
+            activeOpacity={0.7}
+          >
+            <Text style={[
+              styles.sendButtonText,
+              inputText.trim() && !isRecording && !isSpeaking && styles.sendButtonTextActive
+            ]}>
+              Send
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+      </LinearGradient>
+    </SafeAreaView>
+  );
+}
+
+// ==================== STYLES ====================
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#B8C5E8', // Gradient will be added
+  },
+  
+  header: {
+    paddingTop: 60,
+    paddingBottom: 16,
+    paddingHorizontal: 20,
+    backgroundColor: 'transparent',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  
+  headerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  
+  bellIcon: {
+    fontSize: 24,
+  },
+  
+  headerTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  
+  stepIndicator: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
+    opacity: 0.9,
+  },
+  
+  content: {
+    flex: 1,
+  },
+  
+  chatContainer: {
+    flex: 1,
+  },
+  
+  chatContent: {
+    paddingTop: 20,
+    paddingBottom: 20,
+    paddingHorizontal: 16,
+  },
+  
+  messageBubble: {
+    maxWidth: '80%',
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    borderRadius: 20,
+    marginBottom: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  
+  userBubble: {
+    alignSelf: 'flex-end',
+    backgroundColor: '#6B7BE8',
+    borderBottomRightRadius: 4,
+    borderRadius: 20,
+  },
+  
+  assistantBubble: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#FFFFFF',
+    borderBottomLeftRadius: 4,
+    borderRadius: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  
+  messageText: {
+    fontSize: 16,
+    lineHeight: 22,
+    flex: 1,
+  },
+  
+  userText: {
+    color: '#FFFFFF',
+    fontWeight: '500',
+  },
+  
+  assistantText: {
+    color: '#2D3748',
+    fontWeight: '400',
+  },
+  
+  footerHint: {
+    fontSize: 12,
+    color: '#FFFFFF',
+    textAlign: 'center',
+    marginBottom: 8,
+    fontWeight: '400',
+    opacity: 0.6,
+  },
+  
+  inputContainer: {
+    backgroundColor: '#FFFFFF',
+    marginHorizontal: 16,
+    marginBottom: 24,
+    borderRadius: 28,
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 5,
+  },
+  
+  micButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#6B7BE8',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  
+  micButtonRecording: {
+    backgroundColor: '#FF6B6B',
+  },
+  
+  micIcon: {
+    fontSize: 24,
+  },
+  
+  textInput: {
+    flex: 1,
+    height: 48,
+    backgroundColor: 'transparent',
+    paddingHorizontal: 14,
+    fontSize: 16,
+    color: '#2D3748',
+  },
+  
+  sendButton: {
+    paddingHorizontal: 20,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#E2E8F0',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  
+  sendButtonActive: {
+    backgroundColor: '#6B7BE8',
+  },
+  
+  sendButtonText: {
+    fontSize: 15, 
+    fontWeight: '600',
+    color: '#718096',
+  },
+  
+  sendButtonTextActive: {
+    color: '#FFFFFF',
+  },
+});

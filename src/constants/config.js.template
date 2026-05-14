@@ -1,0 +1,22 @@
+export const CONFIG = {
+  SUPABASE_URL: 'your_supabase_url_here',
+  SUPABASE_ANON_KEY: 'your_supabase_anon_key_here',
+  OPENAI_API_KEY: 'your_openai_api_key_here',
+  OPENAI_CHAT_MODEL: 'gpt-4.1-mini',
+  ANTHROPIC_API_KEY: 'your_anthropic_api_key_here',
+  ANTHROPIC_MODEL: 'claude-haiku-4-5-20251001',
+  APP_NAME: 'NudgeMe',
+  APP_TAGLINE: 'Let your mind rest. NudgeMe remembers.',
+};
+
+export const AI_MODELS = {
+  VOICE_ASSISTANT: {
+    provider: 'claude',
+    model: 'claude-haiku-4-5-20251001',
+  },
+  ONBOARDING: {
+    provider: 'openai',
+    model: 'gpt-4.1-mini',
+  },
+};
+

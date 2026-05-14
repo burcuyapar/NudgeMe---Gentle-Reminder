@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NudgeMe Icon Generator</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            background-color: #f0f0f0;
+            margin: 0;
+        }
+        .container {
+            text-align: center;
+        }
+        canvas {
+            box-shadow: 0 10px 20px rgba(0,0,0,0.1);
+            max-width: 100%;
+            height: auto;
+            border-radius: 20px;
+        }
+        button {
+            margin-top: 20px;
+            padding: 12px 24px;
+            font-size: 16px;
+            background-color: #6B7BE8;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        button:hover {
+            background-color: #5A6AD6;
+        }
+        p {
+            color: #666;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>NudgeMe App Icon</h1>
+        <p>Generated from the codebase styles (Cream background + White Circle + 🔔)</p>
+        <canvas id="iconCanvas" width="1024" height="1024"></canvas>
+        <br>
+        <button onclick="downloadIcon()">Download Icon (1024x1024)</button>
+    </div>
+
+    <script>
+        // Constants from theme.js and WelcomeScreen.js
+        // COLORS.cream is likely the background, but WelcomeScreen uses it for the screen bg.
+        // The iconContainer is white.
+        // Let's create a nice composition.
+        // Option 1: Full 'cream' background with the bell in the center (simple).
+        // Option 2: 'cream' background with a white circle container and the bell inside (matching the UI).
+        
+        // Based on WelcomeScreen.js:
+        // container bg: COLORS.cream
+        // iconContainer bg: COLORS.white
+        
+        // We'll approximate COLORS.cream since we don't have the exact hex code from theme.js loaded here.
+        // Looking at search results, I didn't see theme.js content, but WelcomeScreen.js imports it.
+        // I'll assume a nice soft cream color or use white if unsure.
+        // Wait, I can try to find the hex code for COLORS.cream quickly to be precise.
+        // For now I'll use a placeholder and update it if I find it, or use a standard cream #FDFBF7.
+        
+        const COLORS = {
+            cream: '#FFF9F4', // Exact match from theme.js
+            white: '#FFFFFF',
+            softBlue: '#A8C5E8', // Updated from theme.js
+        };
+
+        const canvas = document.getElementById('iconCanvas');
+        const ctx = canvas.getContext('2d');
+
+        function drawIcon() {
+            // 1. Background (Cream)
+            ctx.fillStyle = COLORS.cream;
+            ctx.fillRect(0, 0, 1024, 1024);
+
+            // 2. White Circle Container (Scaled up from 100px to ~600px)
+            // In app: 100x100 container.
+            const centerX = 512;
+            const centerY = 512;
+            const circleRadius = 300; // 600px diameter
+
+            // Add shadow
+            ctx.shadowColor = "rgba(0, 0, 0, 0.1)";
+            ctx.shadowBlur = 40;
+            ctx.shadowOffsetY = 20;
+
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, circleRadius, 0, 2 * Math.PI);
+            ctx.fillStyle = COLORS.white;
+            ctx.fill();
+            
+            // Reset shadow for text
+            ctx.shadowColor = "transparent";
+            ctx.shadowBlur = 0;
+            ctx.shadowOffsetY = 0;
+
+            // 3. Bell Emoji
+            // In app: fontSize 40 inside 100 container (40% of container).
+            // Here: container is 600px, so font should be ~240px?
+            // Actually, let's make it bigger for an icon. 
+            // 600px container -> maybe 350px font size to look good.
+            
+            ctx.font = "400px sans-serif"; // Apple Color Emoji is default on Mac
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            // Emoji vertical alignment can be tricky.
+            // "middle" often needs a slight offset for emojis.
+            ctx.fillText("🔔", centerX, centerY + 40); 
+        }
+
+        function downloadIcon() {
+            const link = document.createElement('a');
+            link.download = 'NudgeMe-Icon-1024.png';
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+        }
+
+        // Draw initially
+        drawIcon();
+    </script>
+</body>
+</html>

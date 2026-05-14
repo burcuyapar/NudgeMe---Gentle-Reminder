@@ -1,0 +1,49 @@
+# Environment variables
+.env
+.env.local
+
+# Dependencies
+node_modules/
+.npm-cache/
+
+# Expo
+.expo/
+.expo-shared/
+dist/
+
+# Native
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.ipa
+*.apk
+
+# Logs
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Build
+web-build/
+build/
+
+# Secrets
+src/constants/config.js
+
+# Temp
+temp_home/
+package-lock.json

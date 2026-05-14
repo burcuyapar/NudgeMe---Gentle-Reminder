@@ -1,0 +1,58 @@
+{
+  "expo": {
+    "name": "NudgeMe - Gentle Reminder",
+    "slug": "nudgeme-fresh",
+    "scheme": "nudgeme",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "notification": {
+      "icon": "./assets/icon.png",
+      "color": "#B8C5E0"
+    },
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#B8C5E0"
+    },
+    "ios": {
+      "buildNumber": "6",
+      "supportsTablet": true,
+      "bundleIdentifier": "com.burcuyapar.nudgeme",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "NudgeMe uses your microphone to create reminders through voice conversations and to help you set up your family schedule hands-free.",
+        "NSSpeechRecognitionUsageDescription": "NudgeMe needs speech recognition to transcribe your voice.",
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ],
+      "edgeToEdgeEnabled": true
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-av",
+        {
+          "microphonePermission": "Allow NudgeMe to access your microphone."
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "285d1b40-b95f-49f9-b3e8-cadf0a0df050"
+      }
+    }
+  }
+}

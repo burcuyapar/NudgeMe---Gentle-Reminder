@@ -1,0 +1,7 @@
+env: load .env
+env: export SUPABASE_URL SUPABASE_ANON_KEY OPENAI_API_KEY ANTHROPIC_API_KEY
+Starting project at /Users/burcuyapar/Documents/trae_projects/NudgeMe
+Starting Metro Bundler
+› Detected a change in babel.config.js. Restart the server to see the new results. You may need to clear the bundler cache with the --clear flag for your changes to take effect.
+› Detected a change in babel.config.js. Restart the server to see the new results. You may need to clear the bundler cache with the --clear flag for your changes to take effect.
+CommandError: ngrok tunnel took too long to connect.
