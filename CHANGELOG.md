@@ -153,7 +153,7 @@ See [README.md](README.md) for upcoming features and roadmap.
 
 ## Contributors
 
-- Primary Developer: [Your Name]
+- Primary Developer: Burcu Yapar 
 - AI Assistant: Claude (Anthropic) - for architecture and debugging
 - Development Tool: Trae Solo Builder - for rapid implementation
 
