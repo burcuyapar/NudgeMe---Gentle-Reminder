@@ -5,18 +5,16 @@
 A voice-first AI assistant that helps overwhelmed parents manage family schedules, school pickups, activities, and self-care through natural conversation.
 
 ![Status](https://img.shields.io/badge/Status-Build%207%20Complete-success)
-![Platform](https://img.shields.io/badge/Platform-iOS%20%7C%20Android-blue)
+![Platform](https://img.shields.io/badge/Platform-iOS-blue)
 ![Framework](https://img.shields.io/badge/Framework-React%20Native%20%2B%20Expo-purple)
 
 ---
 
-## 📱 Try NudgeMe on TestFlight
+## 📱 Project Status
 
-**Live beta available now!**
+**Self-learning project, built solo from December 2025 to May 2026.**
 
-👉 **[Join the Beta](https://testflight.apple.com/join/KUwQsFbz)** 👈
-
-*Note: iOS device required. TestFlight is Apple's official beta testing platform.*
+The TestFlight beta has closed. The code in this repo is complete through Build 7.
 
 ## 🎯 The Problem
 
@@ -39,7 +37,7 @@ NudgeMe captures your family's routines through natural voice conversation and s
 - Two-way voice conversation (tap & hold to speak)
 - Powered by **Claude Haiku 4.5 (claude-haiku-4-5-20251001)** + OpenAI Whisper + TTS
 - Create reminders naturally: *"Pick up Emma from ballet at 4pm tomorrow"*
-- Enterprise-grade security with prompt injection defense
+- Prompt injection defense built in
 
 ### ✅ Smart Dashboard
 - Time-aware greetings (Good morning/afternoon/evening)
@@ -148,7 +146,7 @@ nvm use 20
 1. **Clone the repository**
 ```bash
 git clone https://github.com/burcuyapar/NudgeMe---Gentle-Reminder.git
-cd NudgeMe
+cd NudgeMe---Gentle-Reminder
 ```
 
 2. **Install dependencies**
@@ -232,8 +230,8 @@ MIT License - See LICENSE file for details
 
 ## 👩‍💻 About
 
-Built by **Burcu Yapar** as part of an intensive journey to transition into product management and AI development.
+Built by **Burcu Yapar Üç**, product manager with 8+ years building consumer apps, as a hands-on project to learn AI product development end to end.
 
-**Status**: 🟢 Build 7 Complete | Ready for Beta Testing  
+**Status**: 🟢 Build 7 Complete | Beta closed  
 **Version**: 1.0.0 (Build 7)  
 **Last Updated**: May 14, 2026
